@@ -18,7 +18,7 @@ func main() {
 	const rmqAddr = "amqp://guest:guest@localhost:5672/"
 	rmqConnection, err := amqp.Dial(rmqAddr)
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ server.\n")
+		log.Fatalf("Failed to connect to RabbitMQ server: %v\n", err)
 	}
 	defer rmqConnection.Close()
 	log.Printf("Successfully connected to Rabbit MQ Server.\n")
@@ -26,12 +26,12 @@ func main() {
 	// Open a Rabbit MQ channel
 	rmqChannel, err := rmqConnection.Channel()
 	if err != nil {
-		log.Fatalf("Failed to open RabbitMQ channel.\n")
+		log.Fatalf("Failed to open RabbitMQ channel: %v\n", err)
 	}
 	defer rmqChannel.Close()
 
 	// Publish a JSON message to the exchange
-	pubsub.PublishJSON(
+	err = pubsub.PublishJSON(
 		rmqChannel,
 		routing.ExchangePerilDirect,
 		routing.PauseKey,
@@ -39,6 +39,9 @@ func main() {
 			IsPaused: true,
 		},
 	)
+	if err != nil {
+		log.Fatalf("Faield to publish JSON: %v\n", err)
+	}
 
 	// Capture ctrl + c for cleanup
 	c := make(chan os.Signal, 1.)
