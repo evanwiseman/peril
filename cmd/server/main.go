@@ -27,6 +27,9 @@ func main() {
 		os.Exit(1)
 	}()
 
+	/**************************************************************************
+	RabbitMQ
+	**************************************************************************/
 	// Start up the server
 	log.Println("Starting Peril server...")
 	gamelogic.PrintServerHelp()
@@ -47,6 +50,9 @@ func main() {
 	}
 	defer rabbitMQChannel.Close()
 
+	/**************************************************************************
+	GameLogs
+	**************************************************************************/
 	_, _, err = pubsub.DeclareAndBind(
 		rabbitMQConnection,
 		routing.ExchangePerilTopic,
@@ -58,7 +64,9 @@ func main() {
 		log.Fatalf("Failed to declare and bind: %v\n", err)
 	}
 
-	// Start the REPL
+	/**************************************************************************
+	REPL
+	**************************************************************************/
 	for {
 		words := gamelogic.GetInput()
 		if len(words) == 0 {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -25,7 +26,7 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) routing.Ac
 	}
 }
 
-func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyMove) routing.AckType {
+func handlerMove(gs *gamelogic.GameState, warCh *amqp.Channel, glCh *amqp.Channel) func(gamelogic.ArmyMove) routing.AckType {
 	return func(move gamelogic.ArmyMove) routing.AckType {
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(move)
@@ -35,7 +36,7 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyM
 		case gamelogic.MoveOutcomeMakeWar:
 			// Publish message
 			err := pubsub.PublishJSON(
-				ch,
+				warCh,
 				routing.ExchangePerilTopic,
 				fmt.Sprintf("%v.%v", routing.WarRecognitionsPrefix, gs.Player.Username),
 				gamelogic.RecognitionOfWar{
@@ -55,27 +56,51 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyM
 	}
 }
 
-func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) routing.AckType {
+func handlerWar(gs *gamelogic.GameState, glCh *amqp.Channel) func(gamelogic.RecognitionOfWar) routing.AckType {
 	return func(rw gamelogic.RecognitionOfWar) routing.AckType {
 		defer fmt.Print("> ")
 
-		outcome, _, _ := gs.HandleWar(rw)
+		outcome, winner, loser := gs.HandleWar(rw)
+		gl := routing.GameLog{
+			CurrentTime: time.Now(),
+			Username:    gs.GetUsername(),
+		}
+
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
 			return routing.NackRequeue
 		case gamelogic.WarOutcomeNoUnits:
 			return routing.NackDiscard
-		case gamelogic.WarOutcomeOpponentWon:
-			return routing.Ack
-		case gamelogic.WarOutcomeYouWon:
+		case gamelogic.WarOutcomeOpponentWon, gamelogic.WarOutcomeYouWon:
+			gl.Message = fmt.Sprintf("%v won a war against %v", winner, loser)
+			err := publishGameLog(glCh, gl)
+			if err != nil {
+				return routing.NackRequeue
+			}
 			return routing.Ack
 		case gamelogic.WarOutcomeDraw:
+			gl.Message = fmt.Sprintf("A war between %v and %v, resulted in a draw", winner, loser)
+			err := publishGameLog(glCh, gl)
+			if err != nil {
+				return routing.NackRequeue
+			}
 			return routing.Ack
 		default:
 			log.Println("Invalid war outcome")
 			return routing.NackDiscard
 		}
 	}
+}
+
+func publishGameLog(ch *amqp.Channel, gl routing.GameLog) error {
+	routingKey := fmt.Sprintf("%v.%v", routing.GameLogSlug, gl.Username)
+	err := pubsub.PublishGob(
+		ch,
+		string(routing.ExchangePerilTopic),
+		routingKey,
+		gl,
+	)
+	return err
 }
 
 func main() {
@@ -112,6 +137,24 @@ func main() {
 
 	// Create the game state
 	gs := gamelogic.NewGameState(username)
+
+	/**************************************************************************
+	GameLogs
+	**************************************************************************/
+	glQueueName := routing.GameLogSlug
+	glRoutingKey := routing.GameLogSlug
+	glQueueType := "durable"
+
+	glChannel, _, err := pubsub.DeclareAndBind(
+		rabbitMQConnection,
+		routing.ExchangePerilTopic,
+		glQueueName,
+		glRoutingKey,
+		glQueueType,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare and bind game log exchange: %v\n", err)
+	}
 
 	/**************************************************************************
 	RabbitMQ Pause
@@ -171,7 +214,7 @@ func main() {
 		warQueueName,
 		warRoutingKey,
 		warQueueType,
-		handlerWar(gs),
+		handlerWar(gs, glChannel),
 	)
 	if err != nil {
 		log.Fatalf("Failed to subscribe to war JSON: %v", err)
@@ -203,7 +246,7 @@ func main() {
 		movesQueueName,
 		movesRoutingKey,
 		movesQueueType,
-		handlerMove(gs, warChannel),
+		handlerMove(gs, warChannel, glChannel),
 	)
 	if err != nil {
 		log.Fatalf("Failed to subscribe moves JSON: %v", err)
