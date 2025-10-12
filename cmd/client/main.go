@@ -88,7 +88,10 @@ func main() {
 		os.Exit(1)
 	}()
 
-	// Star the client
+	/**************************************************************************
+	RabbitMQ
+	**************************************************************************/
+	// Start the client
 	fmt.Println("Starting Peril client...")
 
 	// Start Rabbit MQ using the rabbitMQUrl
@@ -99,18 +102,25 @@ func main() {
 	}
 	defer rabbitMQConnection.Close()
 
-	// Get the username provided by user
+	/**************************************************************************
+	GameState
+	**************************************************************************/
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatalf("Failed to get username: %v\n", err)
 	}
 
-	// Declare pause queue and routing name/key
+	// Create the game state
+	gs := gamelogic.NewGameState(username)
+
+	/**************************************************************************
+	RabbitMQ Pause
+	**************************************************************************/
 	pauseQueueName := fmt.Sprintf("%v.%v", routing.PauseKey, username)
 	pauseRoutingKey := routing.PauseKey
 	pauseQueueType := "transient"
 
-	// Bind the pause exchange
+	// Create transient exchange per user/clien
 	_, _, err = pubsub.DeclareAndBind(
 		rabbitMQConnection,
 		routing.ExchangePerilDirect,
@@ -121,8 +131,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to declare and bind pause exchange: %v\n", err)
 	}
-
-	gs := gamelogic.NewGameState(username)
 
 	// Subscribe to pause/resume
 	err = pubsub.SubscribeJSON(
@@ -137,12 +145,14 @@ func main() {
 		log.Fatalf("Failed to subscribe Pause/Resume JSON: %v", err)
 	}
 
-	// Declare move queue and routing name/key
+	/**************************************************************************
+	RabbitMQ War
+	**************************************************************************/
 	warQueueName := routing.WarRecognitionsPrefix                       // durable shared queue
 	warRoutingKey := fmt.Sprintf("%v.*", routing.WarRecognitionsPrefix) // match all usernames
 	warQueueType := "durable"
 
-	// Bind the war exchange
+	// Create durable shared exchange
 	warChannel, _, err := pubsub.DeclareAndBind(
 		rabbitMQConnection,
 		routing.ExchangePerilTopic,
@@ -167,12 +177,14 @@ func main() {
 		log.Fatalf("Failed to subscribe to war JSON: %v", err)
 	}
 
-	// Declare move queue and routing name/key
+	/**************************************************************************
+	RabbitMQ Moves
+	**************************************************************************/
 	movesQueueName := fmt.Sprintf("%v.%v", routing.ArmyMovesPrefix, username)
 	movesRoutingKey := fmt.Sprintf("%v.*", routing.ArmyMovesPrefix)
 	movesQueueType := "transient"
 
-	// Bind the move exchange
+	// Create transient exchange per user/client
 	movesChannel, _, err := pubsub.DeclareAndBind(
 		rabbitMQConnection,
 		routing.ExchangePerilTopic,
@@ -184,7 +196,7 @@ func main() {
 		log.Fatalf("Failed to declare and bind move exchange: %v\n", err)
 	}
 
-	// Subscribe to moves
+	// Subscribe to all moves
 	err = pubsub.SubscribeJSON(
 		rabbitMQConnection,
 		routing.ExchangePerilTopic,
@@ -197,7 +209,9 @@ func main() {
 		log.Fatalf("Failed to subscribe moves JSON: %v", err)
 	}
 
-	// Start the REPL
+	/**************************************************************************
+	REPL
+	**************************************************************************/
 	for {
 		words := gamelogic.GetInput()
 		if len(words) == 0 {
