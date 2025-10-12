@@ -41,14 +41,16 @@ func DeclareAndBind(
 		isAutoDelete,
 		isExclusive,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange": routing.ExchangePerilDlx,
+		},
 	)
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	}
 
 	// Bind the queue to the exchange
-	err = ch.QueueBind(queueName, key, exchange, false, amqp.Table{})
+	err = ch.QueueBind(queueName, key, exchange, false, nil)
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	}

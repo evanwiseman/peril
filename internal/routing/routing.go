@@ -13,4 +13,5 @@ const (
 const (
 	ExchangePerilDirect = "peril_direct"
 	ExchangePerilTopic  = "peril_topic"
+	ExchangePerilDlx    = "peril_dlx"
 )

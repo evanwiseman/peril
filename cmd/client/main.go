@@ -25,16 +25,54 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) routing.Ac
 	}
 }
 
-func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) routing.AckType {
+func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyMove) routing.AckType {
 	return func(move gamelogic.ArmyMove) routing.AckType {
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(move)
 		switch outcome {
-		case gamelogic.MoveOutComeSafe, gamelogic.MoveOutcomeMakeWar:
+		case gamelogic.MoveOutComeSafe:
+			return routing.Ack
+		case gamelogic.MoveOutcomeMakeWar:
+			// Publish message
+			err := pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilTopic,
+				fmt.Sprintf("%v.%v", routing.WarRecognitionsPrefix, gs.Player.Username),
+				gamelogic.RecognitionOfWar{
+					Attacker: move.Player,
+					Defender: gs.GetPlayerSnap(),
+				},
+			)
+			if err != nil {
+				return routing.NackRequeue
+			}
 			return routing.Ack
 		case gamelogic.MoveOutcomeSamePlayer:
 			return routing.NackDiscard
 		default:
+			return routing.NackDiscard
+		}
+	}
+}
+
+func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) routing.AckType {
+	return func(rw gamelogic.RecognitionOfWar) routing.AckType {
+		defer fmt.Print("> ")
+
+		outcome, _, _ := gs.HandleWar(rw)
+		switch outcome {
+		case gamelogic.WarOutcomeNotInvolved:
+			return routing.NackRequeue
+		case gamelogic.WarOutcomeNoUnits:
+			return routing.NackDiscard
+		case gamelogic.WarOutcomeOpponentWon:
+			return routing.Ack
+		case gamelogic.WarOutcomeYouWon:
+			return routing.Ack
+		case gamelogic.WarOutcomeDraw:
+			return routing.Ack
+		default:
+			log.Println("Invalid war outcome")
 			return routing.NackDiscard
 		}
 	}
@@ -100,6 +138,36 @@ func main() {
 	}
 
 	// Declare move queue and routing name/key
+	warQueueName := routing.WarRecognitionsPrefix                       // durable shared queue
+	warRoutingKey := fmt.Sprintf("%v.*", routing.WarRecognitionsPrefix) // match all usernames
+	warQueueType := "durable"
+
+	// Bind the war exchange
+	warChannel, _, err := pubsub.DeclareAndBind(
+		rabbitMQConnection,
+		routing.ExchangePerilTopic,
+		warQueueName,
+		warRoutingKey,
+		warQueueType,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare and bind war queue: %v", err)
+	}
+
+	// Subscribe to war
+	err = pubsub.SubscribeJSON(
+		rabbitMQConnection,
+		routing.ExchangePerilTopic,
+		warQueueName,
+		warRoutingKey,
+		warQueueType,
+		handlerWar(gs),
+	)
+	if err != nil {
+		log.Fatalf("Failed to subscribe to war JSON: %v", err)
+	}
+
+	// Declare move queue and routing name/key
 	movesQueueName := fmt.Sprintf("%v.%v", routing.ArmyMovesPrefix, username)
 	movesRoutingKey := fmt.Sprintf("%v.*", routing.ArmyMovesPrefix)
 	movesQueueType := "transient"
@@ -123,10 +191,10 @@ func main() {
 		movesQueueName,
 		movesRoutingKey,
 		movesQueueType,
-		handlerMove(gs),
+		handlerMove(gs, warChannel),
 	)
 	if err != nil {
-		log.Fatalf("Faield to subscribe moves JSON: %v", err)
+		log.Fatalf("Failed to subscribe moves JSON: %v", err)
 	}
 
 	// Start the REPL
