@@ -11,3 +11,11 @@ type GameLog struct {
 	Message     string
 	Username    string
 }
+
+type AckType int
+
+const (
+	Ack AckType = iota
+	NackRequeue
+	NackDiscard
+)
