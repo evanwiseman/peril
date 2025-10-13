@@ -1,6 +1,8 @@
 package pubsub
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"log"
 
@@ -13,7 +15,7 @@ func DeclareAndBind(
 	exchange,
 	queueName,
 	key string,
-	queueType string, // represents "durable" or "transient"
+	queueType routing.SimpleQueueType, // represents "durable" or "transient"
 ) (*amqp.Channel, amqp.Queue, error) {
 	// Create a new ch
 	ch, err := conn.Channel()
@@ -26,11 +28,11 @@ func DeclareAndBind(
 	var isAutoDelete bool
 	var isExclusive bool
 	switch queueType {
-	case "durable":
+	case routing.Durable:
 		isDurable = true
 		isAutoDelete = false
 		isExclusive = false
-	case "transient":
+	case routing.Transient:
 		isDurable = false
 		isAutoDelete = true
 		isExclusive = true
@@ -64,10 +66,10 @@ func SubscribeJSON[T any](
 	exchange,
 	queueName,
 	key string,
-	queueType string, // represents "durable" or "transient"
+	queueType routing.SimpleQueueType, // represents "durable" or "transient"
 	handler func(T) routing.AckType,
 ) error {
-	// Mak sure the queue exists
+	// Make sure the queue exists
 	ch, _, err := DeclareAndBind(
 		conn,
 		exchange,
@@ -76,7 +78,7 @@ func SubscribeJSON[T any](
 		queueType,
 	)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Get a chan of deliveries by consuming message
@@ -87,10 +89,10 @@ func SubscribeJSON[T any](
 		false,
 		false,
 		false,
-		amqp.Table{},
+		nil,
 	)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	go func() {
@@ -101,6 +103,65 @@ func SubscribeJSON[T any](
 			if err != nil {
 				return
 			}
+
+			// Send the object of T to the handler
+			ackType := handler(obj)
+			switch ackType {
+			case routing.Ack:
+				log.Println("Sending Ack")
+				msg.Ack(false)
+			case routing.NackRequeue:
+				log.Println("Sending Nack Requeue")
+				msg.Nack(false, true)
+			case routing.NackDiscard:
+				log.Println("Sending Nack Discard")
+				msg.Nack(false, false)
+			}
+		}
+	}()
+
+	return nil
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType routing.SimpleQueueType,
+	handler func(T) routing.AckType,
+) error {
+	ch, _, err := DeclareAndBind(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+	)
+	if err != nil {
+		return err
+	}
+
+	msgs, err := ch.Consume(
+		queueName,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range msgs {
+			// Decode gob
+			buffer := bytes.NewBuffer(msg.Body)
+			decoder := gob.NewDecoder(buffer)
+			var obj T
+			decoder.Decode(&obj)
 
 			// Send the object of T to the handler
 			ackType := handler(obj)

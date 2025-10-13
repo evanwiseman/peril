@@ -26,7 +26,7 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) routing.Ac
 	}
 }
 
-func handlerMove(gs *gamelogic.GameState, warCh *amqp.Channel, glCh *amqp.Channel) func(gamelogic.ArmyMove) routing.AckType {
+func handlerMove(gs *gamelogic.GameState, warCh *amqp.Channel) func(gamelogic.ArmyMove) routing.AckType {
 	return func(move gamelogic.ArmyMove) routing.AckType {
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(move)
@@ -143,7 +143,7 @@ func main() {
 	**************************************************************************/
 	glQueueName := routing.GameLogSlug
 	glRoutingKey := routing.GameLogSlug
-	glQueueType := "durable"
+	glQueueType := routing.Durable
 
 	glChannel, _, err := pubsub.DeclareAndBind(
 		rabbitMQConnection,
@@ -161,7 +161,7 @@ func main() {
 	**************************************************************************/
 	pauseQueueName := fmt.Sprintf("%v.%v", routing.PauseKey, username)
 	pauseRoutingKey := routing.PauseKey
-	pauseQueueType := "transient"
+	pauseQueueType := routing.Transient
 
 	// Create transient exchange per user/clien
 	_, _, err = pubsub.DeclareAndBind(
@@ -193,7 +193,7 @@ func main() {
 	**************************************************************************/
 	warQueueName := routing.WarRecognitionsPrefix                       // durable shared queue
 	warRoutingKey := fmt.Sprintf("%v.*", routing.WarRecognitionsPrefix) // match all usernames
-	warQueueType := "durable"
+	warQueueType := routing.Durable
 
 	// Create durable shared exchange
 	warChannel, _, err := pubsub.DeclareAndBind(
@@ -225,7 +225,7 @@ func main() {
 	**************************************************************************/
 	movesQueueName := fmt.Sprintf("%v.%v", routing.ArmyMovesPrefix, username)
 	movesRoutingKey := fmt.Sprintf("%v.*", routing.ArmyMovesPrefix)
-	movesQueueType := "transient"
+	movesQueueType := routing.Transient
 
 	// Create transient exchange per user/client
 	movesChannel, _, err := pubsub.DeclareAndBind(
@@ -246,7 +246,7 @@ func main() {
 		movesQueueName,
 		movesRoutingKey,
 		movesQueueType,
-		handlerMove(gs, warChannel, glChannel),
+		handlerMove(gs, warChannel),
 	)
 	if err != nil {
 		log.Fatalf("Failed to subscribe moves JSON: %v", err)

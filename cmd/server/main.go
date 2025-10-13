@@ -17,6 +17,17 @@ func cleanup() {
 	log.Print("Stopping Peril server...")
 }
 
+func handlerGameLog() func(gamelog routing.GameLog) routing.AckType {
+	return func(gamelog routing.GameLog) routing.AckType {
+		defer fmt.Print("> ")
+		err := gamelogic.WriteLog(gamelog)
+		if err != nil {
+			return routing.NackRequeue
+		}
+		return routing.Ack
+	}
+}
+
 func main() {
 	// Capture ctrl + ctrlC for cleanup
 	ctrlC := make(chan os.Signal, 1.)
@@ -58,11 +69,20 @@ func main() {
 		routing.ExchangePerilTopic,
 		routing.GameLogSlug,
 		fmt.Sprintf("%v.*", routing.GameLogSlug),
-		"durable",
+		routing.Durable,
 	)
 	if err != nil {
 		log.Fatalf("Failed to declare and bind: %v\n", err)
 	}
+
+	pubsub.SubscribeGob(
+		rabbitMQConnection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		fmt.Sprintf("%v.*", routing.GameLogSlug),
+		routing.Durable,
+		handlerGameLog(),
+	)
 
 	/**************************************************************************
 	REPL

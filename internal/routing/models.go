@@ -19,3 +19,10 @@ const (
 	NackRequeue
 	NackDiscard
 )
+
+type SimpleQueueType int
+
+const (
+	Durable SimpleQueueType = iota
+	Transient
+)
